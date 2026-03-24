@@ -1,0 +1,17 @@
+.env
+.env.example
+node_modules/
+dist/
+coverage/
+logs/
+*.log
+*.tmp
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*.swo
+*.bak
+*.backup
+*.zip
+*.tar.gz
