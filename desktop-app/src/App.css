@@ -261,6 +261,40 @@ h2 {
   gap: 6px;
 }
 
+.album-filtered {
+  margin-top: 18px;
+  display: grid;
+  gap: 14px;
+}
+
+.album-filtered-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 14px;
+}
+
+.album-filtered-card {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border-radius: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.album-filtered-card img {
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  border-radius: 14px;
+  display: block;
+}
+
+.album-filtered-copy {
+  display: grid;
+  gap: 10px;
+}
+
 .planner-heading span {
   color: var(--soft-text);
 }

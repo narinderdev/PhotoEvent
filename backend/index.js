@@ -520,10 +520,13 @@ function buildAiAlbums(photos, faceClusters, albumPreferences = defaultAlbumPref
   const protectedPhotoIds = new Set(albumPreferences.referencePhotoId ? [albumPreferences.referencePhotoId] : []);
   const eligiblePhotos = photos.filter((photo) => isAlbumEligible(photo, albumPreferences, protectedPhotoIds));
   const qualityPool = eligiblePhotos.length ? eligiblePhotos : photos.filter((photo) => protectedPhotoIds.has(photo.id));
+  const matchedPhotoIds = new Set(
+    Array.isArray(albumPreferences.matchedPhotoIds) ? albumPreferences.matchedPhotoIds.filter(Boolean) : [],
+  );
   const focusCluster = albumPreferences.primaryClusterId
     ? faceClusters.find((cluster) => cluster.id === albumPreferences.primaryClusterId)
     : null;
-  const focusPhotoIds = new Set(focusCluster?.photoIds ?? []);
+  const focusPhotoIds = matchedPhotoIds.size ? matchedPhotoIds : new Set(focusCluster?.photoIds ?? []);
   const groupMatchedPhotos = photos.filter((photo) => focusPhotoIds.has(photo.id));
   const focusPhotos = qualityPool.filter((photo) => focusPhotoIds.has(photo.id));
   const requirePersonFilter = albumPreferences.requireMainPerson && albumPreferences.mainPersonName;
@@ -535,6 +538,27 @@ function buildAiAlbums(photos, faceClusters, albumPreferences = defaultAlbumPref
   const croppedRemovedCount = albumPreferences.excludeCropped
     ? groupMatchedPhotos.filter((photo) => shouldExcludeForCrop(photo, albumPreferences, protectedPhotoIds)).length
     : 0;
+  const rejectedPhotos = groupMatchedPhotos
+    .map((photo) => {
+      const reasons = [];
+      if (shouldExcludeForBlur(photo, albumPreferences, protectedPhotoIds)) {
+        reasons.push("blur");
+      }
+      if (shouldExcludeForCrop(photo, albumPreferences, protectedPhotoIds)) {
+        reasons.push("crop");
+      }
+
+      if (!reasons.length) {
+        return null;
+      }
+
+      return {
+        photoId: photo.id,
+        name: photo.name,
+        reasons,
+      };
+    })
+    .filter(Boolean);
   const qualityFilteredCount = groupMatchedPhotos.filter(
     (photo) => !isAlbumEligible(photo, albumPreferences, protectedPhotoIds),
   ).length;
@@ -554,10 +578,11 @@ function buildAiAlbums(photos, faceClusters, albumPreferences = defaultAlbumPref
         albumPoolCount: 0,
         albumsCreated: 0,
         albumPreferences,
+        rejectedPhotos,
         noAlbumReason:
           groupMatchedPhotos.length === 0
-            ? "The selected face group did not match any photos in this batch."
-            : "Photos matched the selected face group, but all of them were removed by the current filters.",
+            ? "The selected reference photo did not match any photos in this batch."
+            : "Photos matched the selected reference photo, but all of them were removed by the current filters.",
       }),
     };
   }
@@ -617,6 +642,7 @@ function buildAiAlbums(photos, faceClusters, albumPreferences = defaultAlbumPref
       albumPoolCount: albumPool.length,
       albumsCreated: finalAlbums.length,
       albumPreferences,
+      rejectedPhotos,
       noAlbumReason: finalAlbums.length ? "" : "No photos remained after applying the current album rules.",
     }),
   };
@@ -742,6 +768,9 @@ function parseAlbumPreferences(rawPreferences) {
       mainPersonName: String(parsed?.mainPersonName || "").trim(),
       primaryClusterId: String(parsed?.primaryClusterId || "").trim(),
       referencePhotoId: String(parsed?.referencePhotoId || "").trim(),
+      matchedPhotoIds: Array.isArray(parsed?.matchedPhotoIds)
+        ? parsed.matchedPhotoIds.map((photoId) => String(photoId || "").trim()).filter(Boolean)
+        : [],
       excludeBlurry: parsed?.excludeBlurry !== false,
       excludeCropped: parsed?.excludeCropped !== false,
       requireMainPerson: parsed?.requireMainPerson !== false,
@@ -770,6 +799,7 @@ function defaultAlbumPreferences() {
     mainPersonName: "",
     primaryClusterId: "",
     referencePhotoId: "",
+    matchedPhotoIds: [],
     excludeBlurry: true,
     excludeCropped: true,
     requireMainPerson: true,
@@ -927,6 +957,7 @@ function buildAlbumDiagnostics({
   albumPoolCount,
   albumsCreated,
   albumPreferences,
+  rejectedPhotos = [],
   noAlbumReason,
 }) {
   return {
@@ -944,6 +975,7 @@ function buildAlbumDiagnostics({
     removedNotMatchingMainPersonCount,
     albumPoolCount,
     albumsCreated,
+    rejectedPhotos,
     noAlbumReason: noAlbumReason || null,
   };
 }

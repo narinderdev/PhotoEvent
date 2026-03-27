@@ -19,3 +19,16 @@ This workspace is now organized around the stack you specified:
 2. Start the Node API with `npm run dev` inside `backend`
 3. Start the Electron desktop app with `npm run dev` inside `desktop-app`
 # PhotoEvent
+
+
+Backend .env
+CORS_ORIGINS=https://dev.glowante.com,http://localhost:5173
+SPACES_REGION=blr1
+SPACES_NAME=glowante
+SPACES_ENDPOINT=https://blr1.digitaloceanspaces.com
+SPACES_KEY=DO00LA33FBFD4AA76NV8
+SPACES_SECRET=HkJMycnO9mAjZ9lISTY6pZac73BUKRTy69s1EiD8/QY
+SPACES_CDN_URL=https://glowante.blr1.cdn.digitaloceanspaces.com
+DB_SSL=true
+SPACES_UPLOAD_PREFIX=photo_event/uploads
+PORT=3000

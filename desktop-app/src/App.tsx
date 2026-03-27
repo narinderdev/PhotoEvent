@@ -1,9 +1,10 @@
 import { useEffect, useState, type ChangeEvent } from "react";
 import "./App.css";
-import type { RecognizedFaceCluster } from "./lib/faceRecognition";
+import type { RecognizedFaceCluster, RecognizedFaceDetection } from "./lib/faceRecognition";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:3000";
 const FACE_MODEL_URL = import.meta.env.VITE_FACE_MODEL_URL ?? "https://justadudewhohacks.github.io/face-api.js/models";
+const REFERENCE_MATCH_THRESHOLD = 0.52;
 
 type SelectedPhoto = {
   id: string;
@@ -66,6 +67,7 @@ type AlbumPreferences = {
   mainPersonName: string;
   primaryClusterId: string;
   referencePhotoId: string;
+  matchedPhotoIds: string[];
   excludeBlurry: boolean;
   excludeCropped: boolean;
   requireMainPerson: boolean;
@@ -86,6 +88,11 @@ type AlbumDiagnostics = {
   removedNotMatchingMainPersonCount: number;
   albumPoolCount: number;
   albumsCreated: number;
+  rejectedPhotos: Array<{
+    photoId: string;
+    name: string;
+    reasons: string[];
+  }>;
   noAlbumReason: string | null;
 };
 
@@ -156,6 +163,7 @@ function App() {
   const [copied, setCopied] = useState(false);
   const [qrImageUrl, setQrImageUrl] = useState("");
   const [visionClusters, setVisionClusters] = useState<RecognizedFaceCluster[]>([]);
+  const [visionDetections, setVisionDetections] = useState<RecognizedFaceDetection[]>([]);
   const [faceAnalysisStatus, setFaceAnalysisStatus] = useState<FaceAnalysisStatus>("idle");
   const [faceAnalysisMessage, setFaceAnalysisMessage] = useState("");
   const [faceModelsReady, setFaceModelsReady] = useState(false);
@@ -294,6 +302,7 @@ function App() {
     setSelectedPhotos(nextSelection);
     setResult(null);
     setVisionClusters([]);
+    setVisionDetections([]);
     setSelectedAlbumId(null);
     setErrorMessage("");
     setCopied(false);
@@ -317,27 +326,31 @@ function App() {
       setFaceAnalysisMessage("Looking for people in your photos.");
       const { analyzePhotoFaces } = await import("./lib/faceRecognition");
 
-      const clusters = await analyzePhotoFaces(
+      const analysis = await analyzePhotoFaces(
         photosToAnalyze.map((photo) => ({
           id: photo.id,
           imageUrl: photo.previewUrl,
         })),
         FACE_MODEL_URL,
       );
+      const clusters = analysis.clusters;
 
       if (clusters.length) {
         setVisionClusters(clusters);
+        setVisionDetections(analysis.detections);
         setFaceAnalysisStatus("ready");
         setFaceAnalysisMessage("Choose which detected group matches the main person for this event.");
         return clusters;
       }
 
       setVisionClusters([]);
+      setVisionDetections([]);
       setFaceAnalysisStatus("ready");
       setFaceAnalysisMessage("No clear face groups were found in this batch.");
       return [];
     } catch (_error) {
       setVisionClusters([]);
+      setVisionDetections([]);
       setFaceAnalysisStatus("unavailable");
       setFaceAnalysisMessage("Face grouping is unavailable right now.");
       return [];
@@ -378,11 +391,15 @@ function App() {
   const storageNotice = health?.aiMasking.online
     ? "Privacy masking is available."
     : "Privacy masking can be added when needed.";
+  const matchedReferencePhotoIds = selectedReferencePhotoId
+    ? matchDetectionsToReference(visionDetections, selectedReferencePhotoId)
+    : [];
   const albumPreferences: AlbumPreferences = {
     eventName: eventName.trim(),
     mainPersonName: mainPersonName.trim(),
     primaryClusterId: selectedPrimaryClusterId,
     referencePhotoId: selectedReferencePhotoId,
+    matchedPhotoIds: matchedReferencePhotoIds,
     excludeBlurry,
     excludeCropped,
     requireMainPerson,
@@ -391,12 +408,16 @@ function App() {
     namedFaceClusters.find((cluster) => cluster.id === selectedPrimaryClusterId)?.displayLabel ?? "";
   const activeFaceClusterKey = namedFaceClusters.map((cluster) => cluster.id).join("|");
   const selectedGroup = namedFaceClusters.find((cluster) => cluster.id === selectedPrimaryClusterId) ?? null;
-  const matchedPreviewPhotos = selectedGroup
-    ? selectedPhotos.filter((photo) => selectedGroup.photoIds.includes(photo.id))
-    : [];
-  const unmatchedPreviewPhotos = selectedGroup
-    ? selectedPhotos.filter((photo) => !selectedGroup.photoIds.includes(photo.id))
-    : selectedPhotos;
+  const matchedPreviewPhotos = selectedReferencePhotoId
+    ? selectedPhotos.filter((photo) => matchedReferencePhotoIds.includes(photo.id))
+    : selectedGroup
+      ? selectedPhotos.filter((photo) => selectedGroup.photoIds.includes(photo.id))
+      : [];
+  const unmatchedPreviewPhotos = selectedReferencePhotoId
+    ? selectedPhotos.filter((photo) => !matchedReferencePhotoIds.includes(photo.id))
+    : selectedGroup
+      ? selectedPhotos.filter((photo) => !selectedGroup.photoIds.includes(photo.id))
+      : selectedPhotos;
   const selectedReferencePhoto = selectedPhotos.find((photo) => photo.id === selectedReferencePhotoId) ?? null;
   const canContinueToReference = Boolean(selectedPhotos.length && albumPreferences.eventName && albumPreferences.mainPersonName);
   const canContinueToReview = Boolean(selectedReferencePhotoId && selectedPrimaryClusterId && matchedPreviewPhotos.length);
@@ -636,6 +657,7 @@ function App() {
                 setSelectedPrimaryClusterId("");
                 setResult(null);
                 setVisionClusters([]);
+                setVisionDetections([]);
                 setSelectedAlbumId(null);
                 setFaceAnalysisStatus("idle");
                 setFaceAnalysisMessage("");
@@ -775,8 +797,8 @@ function App() {
 
           <section className="planner-card">
             <div className="planner-heading">
-              <strong>Photos that match the selected face group</strong>
-              <span>These are the exact photos PhotoFlow will try to use for the album before applying blur/crop rules.</span>
+              <strong>Photos that match the selected reference photo</strong>
+              <span>These are the exact photos PhotoFlow will try to use for the album before applying blur and crop rules.</span>
             </div>
 
             {matchedPreviewPhotos.length ? (
@@ -786,21 +808,21 @@ function App() {
                     <img src={photo.previewUrl} alt={photo.file.name} />
                     <figcaption>
                       <strong>{photo.file.name}</strong>
-                      <span>Matched to {selectedClusterLabel}</span>
+                      <span>Matched to {albumPreferences.mainPersonName || selectedClusterLabel || "selected reference"}</span>
                     </figcaption>
                   </figure>
                 ))}
               </div>
             ) : (
-              <div className="empty-state">No photos currently match the selected face group.</div>
+              <div className="empty-state">No photos currently match the selected reference photo.</div>
             )}
           </section>
 
           {unmatchedPreviewPhotos.length ? (
             <section className="planner-card">
               <div className="planner-heading">
-                <strong>Photos outside this album group</strong>
-                <span>These photos are not part of the selected face group.</span>
+                <strong>Photos outside this album match</strong>
+                <span>These photos do not match the selected reference photo.</span>
               </div>
               <div className="photo-strip compact-photo-strip">
                 {unmatchedPreviewPhotos.slice(0, 8).map((photo) => (
@@ -1035,7 +1057,7 @@ function App() {
                 <strong>Why these albums were created</strong>
                 <div className="album-diagnostics-grid">
                   <div>
-                    <span>Photos in selected group</span>
+                    <span>Photos matching reference</span>
                     <strong>{result.albumDiagnostics.selectedGroupPhotoCount}</strong>
                   </div>
                   <div>
@@ -1119,7 +1141,7 @@ function App() {
                     <strong>{result.albumDiagnostics.totalPhotos}</strong>
                   </div>
                   <div>
-                    <span>Matched selected group</span>
+                    <span>Matched reference photo</span>
                     <strong>{result.albumDiagnostics.selectedGroupPhotoCount}</strong>
                   </div>
                   <div>
@@ -1140,13 +1162,38 @@ function App() {
                   </div>
                 </div>
                 <p className="footnote">
-                  Try another detected face group, or turn off one of the album filters and process again.
+                  Try another reference photo, or turn off one of the album filters and process again.
                 </p>
               </div>
             ) : (
               <div className="empty-state">Suggested albums will appear after processing.</div>
             )
           )}
+
+          {result?.albumDiagnostics.rejectedPhotos.length ? (
+            <div className="album-filtered">
+              <strong>Photos removed by album filters</strong>
+              <div className="album-filtered-grid">
+                {result.albumDiagnostics.rejectedPhotos.map((photo) => (
+                  <article className="album-filtered-card" key={photo.photoId}>
+                    {previewById.get(photo.photoId) ? (
+                      <img src={previewById.get(photo.photoId)} alt={photo.name} />
+                    ) : null}
+                    <div className="album-filtered-copy">
+                      <strong>{photo.name}</strong>
+                      <div className="cluster-meta">
+                        {photo.reasons.map((reason) => (
+                          <span className="meta-pill" key={`${photo.photoId}-${reason}`}>
+                            Removed for {reason}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          ) : null}
         </article>
 
         <article className="panel">
@@ -1324,6 +1371,36 @@ function formatClusterName(label: string, index: number) {
 
 function formatDetectedGroupLabel(index: number) {
   return `Group ${index + 1}`;
+}
+
+function matchDetectionsToReference(detections: RecognizedFaceDetection[], referencePhotoId: string) {
+  const reference = detections.find((detection) => detection.photoId === referencePhotoId);
+  if (!reference) {
+    return [];
+  }
+
+  return detections
+    .map((detection) => ({
+      photoId: detection.photoId,
+      distance: euclideanDistance(reference.descriptor, detection.descriptor),
+    }))
+    .filter((match) => match.distance <= REFERENCE_MATCH_THRESHOLD)
+    .sort((left, right) => left.distance - right.distance)
+    .map((match) => match.photoId);
+}
+
+function euclideanDistance(left: number[], right: number[]) {
+  if (left.length !== right.length || !left.length) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  let total = 0;
+  for (let index = 0; index < left.length; index += 1) {
+    const delta = left[index] - right[index];
+    total += delta * delta;
+  }
+
+  return Math.sqrt(total);
 }
 
 export default App;
